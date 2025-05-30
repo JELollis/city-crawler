@@ -122,7 +122,7 @@ interface TileData {
   building?: Building;
   isStrategic: boolean;
   isPlayer: boolean;
-  tileType: 'street' | 'city' | 'intersect' | 'citylimit'; // Match the game's CSS classes
+  tileType: 'street' | 'city' | 'intersect'; // Removed citylimit
   streetName?: string; // For intersections
   tileColor: string;
   distanceScore: number;
@@ -169,73 +169,36 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
 
     for (let x = 0; x < CITY_SIZE; x++) {
       for (let y = 0; y < CITY_SIZE; y++) {
-        // Check if we're in the city limits border (single pixel border)
-        const isCityLimit = x === 0 || x === CITY_SIZE - 1 || y === 0 || y === CITY_SIZE - 1;
-
-        // For the actual game area (coordinates 1-200), we need to adjust for building lookups
-        const gameX = x - 1; // Adjust for city limits border
-        const gameY = y - 1; // Adjust for city limits border
-
-        const building = (isCityLimit || gameX < 0 || gameY < 0 || gameX >= 200 || gameY >= 200) ?
-                         undefined : getBuildingAt(gameX, gameY);
-        const distanceScore = (isCityLimit || gameX < 0 || gameY < 0 || gameX >= 200 || gameY >= 200) ?
-                             0 : getDistanceScore(gameX, gameY);
-        const isPlayer = !isCityLimit && gameX >= 0 && gameY >= 0 &&
-                        playerLocation.x === gameX && playerLocation.y === gameY;
+        const building = getBuildingAt(x, y);
+        const distanceScore = getDistanceScore(x, y);
+        const isPlayer = playerLocation.x === x && playerLocation.y === y;
 
         // Determine tile type based on coordinate pattern
-        let tileType: 'street' | 'city' | 'intersect' | 'citylimit';
+        let tileType: 'street' | 'city' | 'intersect';
         let streetName: string | undefined;
 
-        if (isCityLimit) {
-          // City limits border
-          tileType = 'citylimit';
-          // Add city limit names for intersections
-          if (x === 0 && y === 0) streetName = 'WCL & NCL';
-          else if (x === CITY_SIZE - 1 && y === 0) streetName = 'ECL & NCL';
-          else if (x === 0 && y === CITY_SIZE - 1) streetName = 'WCL & SCL';
-          else if (x === CITY_SIZE - 1 && y === CITY_SIZE - 1) streetName = 'ECL & SCL';
-          else if (x === 0) streetName = `${getStreetName(x)} & ${getStreetNumber(y)}`;
-          else if (x === CITY_SIZE - 1) streetName = `${getStreetName(x)} & ${getStreetNumber(y)}`;
-          else if (y === 0) streetName = `${getStreetName(x)} & ${getStreetNumber(y)}`;
-          else if (y === CITY_SIZE - 1) streetName = `${getStreetName(x)} & ${getStreetNumber(y)}`;
+        const xIsOdd = x % 2 === 1;
+        const yIsOdd = y % 2 === 1;
+
+        if (xIsOdd && yIsOdd) {
+          // Intersection - both coordinates are odd
+          tileType = 'intersect';
+          streetName = getLocationName(x, y);
+        } else if (xIsOdd || yIsOdd) {
+          // Street - one coordinate is odd
+          tileType = 'street';
         } else {
-          // Regular game grid logic for coordinates 1-200
-          const xIsOdd = x % 2 === 0; // Adjusted for single-pixel border
-          const yIsOdd = y % 2 === 0; // Adjusted for single-pixel border
-
-          if (xIsOdd && yIsOdd) {
-            // Intersection - both coordinates are even (after border adjustment)
-            tileType = 'intersect';
-            streetName = getLocationName(x, y);
-          } else if (xIsOdd || yIsOdd) {
-            // Street - one coordinate is even
-            tileType = 'street';
-          } else {
-            // City block - both coordinates are odd
-            tileType = 'city';
-          }
+          // City block - both coordinates are even
+          tileType = 'city';
         }
 
-        // Determine tile color
-        let tileColor = '#444444'; // Default street color
-        if (isCityLimit) {
-          tileColor = '#0088ff'; // Bright blue for city limits
-        } else if (tileType === 'intersect') {
-          tileColor = '#444444'; // Street color for intersections
-        } else if (tileType === 'street') {
-          tileColor = '#444444'; // Street color
-        } else if (tileType === 'city') {
-          tileColor = '#000000'; // Black for city blocks
-        }
-
-        // Add green overlay for high distance scores (transparent)
-        if (distanceScore > 0 && tileType === 'city') {
-          const greenOpacity = Math.min(distanceScore * 0.6, 0.6); // Max 60% opacity
-          const greenOverlay = `rgba(0, 255, 0, ${greenOpacity})`;
-          // Blend the green with the base color
-          tileColor = greenOverlay;
-        }
+        // Create a hashmap of tile colors based on distance score
+        // rgba value for grey streets and intersects is 44, 44, 44
+        let tileColor = {
+          city: `rgba(0, 255, 0, ${Math.min(distanceScore * 6, 0.6)})`,
+          intersect: `rgb(68, ${500 * distanceScore + 68}, 68)`,
+          street: `rgb(68, ${500 * distanceScore + 68}, 68)`
+        }[tileType];
 
         // Add building colors on top of base tile color
         if (isPlayer) {
@@ -342,8 +305,8 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
     // Add player marker
     const playerMarker = g.append('text')
       .attr('class', 'player-marker')
-      .attr('x', (playerLocation.x + 1) * tileSize + tileSize / 2) // +1 to account for single-pixel city limit border
-      .attr('y', (playerLocation.y + 1) * tileSize + tileSize / 2) // +1 to account for single-pixel city limit border
+      .attr('x', playerLocation.x * tileSize + tileSize / 2) // No offset needed
+      .attr('y', playerLocation.y * tileSize + tileSize / 2) // No offset needed
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .attr('fill', 'white')
@@ -464,9 +427,9 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
 
     // Center on player initially with smooth transition
     const initialScale = 2;
-    // Account for city limits border (+1 offset)
-    const centerX = width / 2 - (playerLocation.x + 1) * tileSize * initialScale;
-    const centerY = height / 2 - (playerLocation.y + 1) * tileSize * initialScale;
+    // No offset needed since there's no border
+    const centerX = width / 2 - playerLocation.x * tileSize * initialScale;
+    const centerY = height / 2 - playerLocation.y * tileSize * initialScale;
 
     svg.transition()
       .duration(1000)
@@ -495,13 +458,17 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
         .style('left', `${event.pageX + 10}px`)
         .style('top', `${event.pageY - 10}px`);
 
-      d3.select(this).attr('stroke', '#fff').attr('stroke-width', 1);
+      // Highlight the hovered tile
+      d3.select(this).attr('stroke', '#fff').attr('stroke-width', 2);
     })
-    .on('mouseout', function(d: TileData) {
+    .on('mouseout', function() {
+      // Remove tooltip
       d3.selectAll('.tooltip').remove();
+
+      // Reset stroke to default
       d3.select(this)
         .attr('stroke', colors.grid)
-        .attr('stroke-width', 0.5);
+        .attr('stroke-width', 0.1);
     });
 
     const endTime = performance.now();
@@ -536,9 +503,9 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
     const height = window.innerHeight;
     const scale = 3;
 
-    // Account for single-pixel city limits border (+1 offset)
-    const centerX = width / 2 - (playerLocation.x + 1) * tileSize * scale;
-    const centerY = height / 2 - (playerLocation.y + 1) * tileSize * scale;
+    // No offset needed since there's no border
+    const centerX = width / 2 - playerLocation.x * tileSize * scale;
+    const centerY = height / 2 - playerLocation.y * tileSize * scale;
 
     svg.transition().duration(750).call(
       d3.zoom<SVGSVGElement, unknown>().transform as any,
@@ -598,7 +565,6 @@ export const D3CityMap: React.FC<D3CityMapProps> = ({
         </LegendHeader>
         <LegendContent $isVisible={isLegendVisible}>
           <div><strong>Tile Types:</strong></div>
-          <LegendItem $color={colors.citylimit}>City Limits Border</LegendItem>
           <LegendItem $color={colors.city}>City Block (buildings)</LegendItem>
           <LegendItem $color={colors.street}>Street Segment</LegendItem>
           <LegendItem $color={colors.intersect}>Street Intersection</LegendItem>

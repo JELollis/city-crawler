@@ -446,7 +446,7 @@ export const BUILDINGS: Building[] = [
   { id: 'hidden_3', type: 'hidden', name: 'Mysterious Building', coordinate: { x: 86, y: 158 } },
 ];
 
-export const CITY_SIZE = 202;
+export const CITY_SIZE = 200; // 200x200 grid without border
 
 export function getStreetNumber(index: number): string {
   // Handle city limits
@@ -482,11 +482,6 @@ export function getBuildingAt(x: number, y: number): Building | undefined {
 
 // Calculate distance-based score for a city block based on distance from nearest bank
 export function getDistanceScore(x: number, y: number): number {
-  // Only calculate scores for city blocks (even coordinates)
-  if (x % 2 !== 0 || y % 2 !== 0) {
-    return 0;
-  }
-
   // Get all bank locations
   const banks = BUILDINGS.filter(building => building.type === 'bank');
 
