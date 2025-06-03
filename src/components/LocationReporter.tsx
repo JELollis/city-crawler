@@ -165,7 +165,7 @@ interface LocationReporterProps {
 
 export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationReported }) => {
   const [activeTab, setActiveTab] = useState<'dropdown' | 'text'>('dropdown');
-  const [buildingType, setBuildingType] = useState<'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item'>('shop');
+  const [buildingType, setBuildingType] = useState<'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item' | 'blood_deity' | 'rich_vampire'>('shop');
   const [buildingName, setBuildingName] = useState('');
   const [customItemName, setCustomItemName] = useState('');
   const [streetName, setStreetName] = useState('');
@@ -173,6 +173,8 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
   const [reporterName, setReporterName] = useState('');
   const [notes, setNotes] = useState('');
   const [guildLevel, setGuildLevel] = useState<1 | 2 | 3>(1);
+  const [bloodAmount, setBloodAmount] = useState<number>(0);
+  const [coins, setCoins] = useState<number>(0);
   const [naturalLanguageInput, setNaturalLanguageInput] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -197,6 +199,9 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
     if (buildingType === 'item') {
       return ['Special Item']; // This will use custom item name
     }
+    if (buildingType === 'blood_deity' || buildingType === 'rich_vampire') {
+      return []; // These will use custom names/vampire names
+    }
     return [];
   };
 
@@ -218,10 +223,12 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
     setReporterName('');
     setNotes('');
     setGuildLevel(1);
+    setBloodAmount(0);
+    setCoins(0);
     setNaturalLanguageInput('');
   };
 
-  const handleBuildingTypeChange = (newType: 'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item') => {
+  const handleBuildingTypeChange = (newType: 'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item' | 'blood_deity' | 'rich_vampire') => {
     setBuildingType(newType);
     setBuildingName('');
     setCustomItemName('');
@@ -240,10 +247,57 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
       customItemName,
       reporterName,
       guildLevel,
+      bloodAmount,
+      coins,
       notes
     });
 
-    if (!buildingName || !streetName || !streetNumber) {
+    // Handle Blood Deity and Rich Vampire separately
+    if (buildingType === 'blood_deity') {
+      if (!buildingName || bloodAmount <= 0) {
+        setErrorMessage('Please enter a vampire name and blood amount.');
+        return;
+      }
+
+      try {
+        await ApiService.submitBloodDeity(buildingName, bloodAmount, reporterName || undefined);
+        setSuccessMessage(`Successfully reported ${buildingName} as a Blood Deity with ${bloodAmount} pints!`);
+        resetForm();
+        onLocationReported?.({} as ReportedLocation); // Trigger refresh
+        return;
+      } catch (error) {
+        console.error('❌ Blood deity submission failed:', error);
+        setErrorMessage('Error submitting blood deity. Please try again.');
+        return;
+      }
+    }
+
+    if (buildingType === 'rich_vampire') {
+      if (!buildingName) {
+        setErrorMessage('Please enter a vampire name.');
+        return;
+      }
+
+      try {
+        await ApiService.submitRichVampire(buildingName, reporterName || undefined);
+        setSuccessMessage(`Successfully reported ${buildingName} as a Rich Vampire!`);
+        resetForm();
+        onLocationReported?.({} as ReportedLocation); // Trigger refresh
+        return;
+      } catch (error) {
+        console.error('❌ Rich vampire submission failed:', error);
+        setErrorMessage('Error submitting rich vampire. Please try again.');
+        return;
+      }
+    }
+
+    // Regular location reporting logic for other building types
+    // For hunter/paladin/werewolf, use the type as the building name
+    const effectiveBuildingName = ['hunter', 'paladin', 'werewolf'].includes(buildingType)
+      ? buildingType.charAt(0).toUpperCase() + buildingType.slice(1)
+      : buildingName;
+
+    if (!effectiveBuildingName || !streetName || !streetNumber) {
       console.log('❌ Form validation failed - missing required fields');
       setErrorMessage('Please fill in all required fields.');
       return;
@@ -261,7 +315,7 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
       console.log('📍 Calculated coordinates:', coordinate);
 
       const report: LocationReport = {
-        buildingName,
+        buildingName: effectiveBuildingName,
         buildingType,
         customItemName: buildingType === 'item' ? customItemName : undefined,
         streetName,
@@ -269,14 +323,16 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
         coordinate,
         reporterName: reporterName || undefined,
         notes: notes || undefined,
-        guildLevel: buildingType === 'guild' ? guildLevel : undefined
+        guildLevel: buildingType === 'guild' ? guildLevel : undefined,
+        bloodAmount,
+        coins
       };
 
       console.log('📤 Sending API request with data:', report);
       const reportedLocation = await ApiService.createLocation(report);
       console.log('✅ API request successful:', reportedLocation);
 
-      setSuccessMessage(`Successfully reported ${buildingName} at ${streetName} & ${streetNumber}!`);
+      setSuccessMessage(`Successfully reported ${effectiveBuildingName} at ${streetName} & ${streetNumber}!`);
       resetForm();
       onLocationReported?.(reportedLocation);
     } catch (error) {
@@ -310,38 +366,78 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
     }
 
     try {
-      const parsedReport = parseNaturalLanguageLocation(naturalLanguageInput);
-      console.log('🔍 Parsed natural language input:', parsedReport);
+      // Split input by newlines and filter out empty lines
+      const locationLines = naturalLanguageInput
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
 
-      if (!parsedReport) {
-        console.log('❌ Natural language parsing failed');
-        setErrorMessage('Could not parse the location description. Please try a format like "Paper and Scrolls, right by Regret and 90th"');
-        return;
-      }
+      console.log(`🔍 Processing ${locationLines.length} location(s)`);
 
-      const report: LocationReport = {
-        ...parsedReport,
-        coordinate: parsedReport.coordinate || parseLocationToCoordinate(parsedReport.streetName, parsedReport.streetNumber),
-        reporterName: reporterName || undefined,
-        notes: notes || undefined
+      const results: { success: number; failed: number; details: string[] } = {
+        success: 0,
+        failed: 0,
+        details: []
       };
 
-      console.log('📤 Sending API request with parsed data:', report);
-      const reportedLocation = await ApiService.createLocation(report);
-      console.log('✅ API request successful:', reportedLocation);
+      // Process each location
+      for (const [index, locationLine] of locationLines.entries()) {
+        console.log(`🔍 Processing location ${index + 1}/${locationLines.length}: ${locationLine}`);
 
-      setSuccessMessage(`Successfully reported ${parsedReport.buildingName} at ${parsedReport.streetName} & ${parsedReport.streetNumber}!`);
-      resetForm();
-      onLocationReported?.(reportedLocation);
+        try {
+          const parsedReport = parseNaturalLanguageLocation(locationLine);
+
+          if (!parsedReport) {
+            console.log(`❌ Natural language parsing failed for: ${locationLine}`);
+            results.failed++;
+            results.details.push(`❌ Could not parse: "${locationLine}"`);
+            continue;
+          }
+
+          const report: LocationReport = {
+            ...parsedReport,
+            coordinate: parsedReport.coordinate || parseLocationToCoordinate(parsedReport.streetName, parsedReport.streetNumber),
+            reporterName: reporterName || undefined,
+            notes: notes || undefined,
+            bloodAmount,
+            coins
+          };
+
+          console.log(`📤 Sending API request for: ${parsedReport.buildingName}`);
+          await ApiService.createLocation(report);
+          console.log(`✅ Successfully reported: ${parsedReport.buildingName}`);
+
+          results.success++;
+          results.details.push(`✅ ${parsedReport.buildingName} at ${parsedReport.streetName} & ${parsedReport.streetNumber}`);
+
+          if (onLocationReported) {
+            // We don't have the full returned location object for batch processing
+            // Just trigger the callback to refresh the listings
+            onLocationReported({} as ReportedLocation);
+          }
+
+        } catch (error) {
+          console.error(`❌ API request failed for: ${locationLine}`, error);
+          results.failed++;
+          results.details.push(`❌ Failed to report: "${locationLine}"`);
+        }
+      }
+
+      // Show summary message
+      if (results.success > 0 && results.failed === 0) {
+        setSuccessMessage(`Successfully reported ${results.success} location${results.success > 1 ? 's' : ''}!`);
+        resetForm();
+      } else if (results.success > 0 && results.failed > 0) {
+        setSuccessMessage(`Reported ${results.success} location${results.success > 1 ? 's' : ''}, ${results.failed} failed. Check console for details.`);
+        console.log('📊 Batch processing results:', results);
+      } else {
+        setErrorMessage(`Failed to report any locations. Please check the format and try again.`);
+        console.log('📊 Batch processing results:', results);
+      }
+
     } catch (error) {
-      console.error('❌ API request failed:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        naturalLanguageInput,
-        reporterName
-      });
-      setErrorMessage('Error submitting report. Please try again.');
+      console.error('❌ Batch processing failed:', error);
+      setErrorMessage('Error processing locations. Please try again.');
     }
   };
 
@@ -370,7 +466,7 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
             <Label>Building Type</Label>
             <Select
               value={buildingType}
-              onChange={(e) => handleBuildingTypeChange(e.target.value as 'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item')}
+              onChange={(e) => handleBuildingTypeChange(e.target.value as 'shop' | 'guild' | 'hunter' | 'paladin' | 'werewolf' | 'item' | 'blood_deity' | 'rich_vampire')}
             >
               <option value="shop">Shop</option>
               <option value="guild">Guild</option>
@@ -378,43 +474,33 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
               <option value="paladin">Paladin</option>
               <option value="werewolf">Werewolf</option>
               <option value="item">Item</option>
+              <option value="blood_deity">Blood Deity</option>
+              <option value="rich_vampire">Rich Vampire</option>
             </Select>
           </FormSection>
 
-          <FormSection>
-            <Label>Building Name *</Label>
-            <Select
-              value={buildingName}
-              onChange={(e) => setBuildingName(e.target.value)}
-              required
-            >
-              <option value="">Select a building...</option>
-              {getFilteredBuildingNames().map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </Select>
-          </FormSection>
-
-          {buildingType === 'item' && (
+          {!['hunter', 'paladin', 'werewolf', 'blood_deity', 'rich_vampire'].includes(buildingType) && (
             <FormSection>
-              <Label>Custom Item Name *</Label>
-              <Input
-                type="text"
-                value={customItemName}
-                onChange={(e) => setCustomItemName(e.target.value)}
-                placeholder="Enter the name of the special item"
+              <Label>Building Name *</Label>
+              <Select
+                value={buildingName}
+                onChange={(e) => setBuildingName(e.target.value)}
                 required
-              />
+              >
+                <option value="">Select a building...</option>
+                {getFilteredBuildingNames().map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </Select>
             </FormSection>
           )}
 
           {buildingType === 'guild' && (
             <FormSection>
-              <Label>Guild Level *</Label>
+              <Label>Guild Level</Label>
               <Select
                 value={guildLevel}
-                onChange={(e) => setGuildLevel(Number.parseInt(e.target.value, 10) as 1 | 2 | 3)}
-                required
+                onChange={(e) => setGuildLevel(parseInt(e.target.value) as 1 | 2 | 3)}
               >
                 <option value={1}>Level 1</option>
                 <option value={2}>Level 2</option>
@@ -423,35 +509,79 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
             </FormSection>
           )}
 
-          <FormRow>
+          {buildingType === 'item' && (
             <FormSection>
-              <Label>Street Name *</Label>
-              <Select
-                value={streetName}
-                onChange={(e) => setStreetName(e.target.value)}
+              <Label>Item Name *</Label>
+              <Input
+                type="text"
+                value={customItemName}
+                onChange={(e) => setCustomItemName(e.target.value)}
+                placeholder="Enter the item name..."
                 required
-              >
-                <option value="">Select a street...</option>
-                {STREET_NAMES.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </Select>
+              />
             </FormSection>
+          )}
 
+          {(buildingType === 'blood_deity' || buildingType === 'rich_vampire') && (
             <FormSection>
-              <Label>Street Number *</Label>
-              <Select
-                value={streetNumber}
-                onChange={(e) => setStreetNumber(e.target.value)}
+              <Label>Vampire Name *</Label>
+              <Input
+                type="text"
+                value={buildingName}
+                onChange={(e) => setBuildingName(e.target.value)}
+                placeholder="Enter the vampire's name..."
                 required
-              >
-                <option value="">Select number...</option>
-                {streetNumbers.map(num => (
-                  <option key={num} value={num}>{num}</option>
-                ))}
-              </Select>
+              />
             </FormSection>
-          </FormRow>
+          )}
+
+          {buildingType === 'blood_deity' && (
+            <FormSection>
+              <Label>Blood Amount (pints) *</Label>
+              <Input
+                type="number"
+                value={bloodAmount}
+                onChange={(e) => setBloodAmount(parseInt(e.target.value) || 0)}
+                placeholder="Enter blood amount..."
+                min="0"
+                required
+              />
+            </FormSection>
+          )}
+
+          {/* Rich Vampires don't report coin amounts - just vampire names */}
+
+          {!['blood_deity', 'rich_vampire'].includes(buildingType) && (
+            <FormRow>
+              <FormSection>
+                <Label>Street Name *</Label>
+                <Select
+                  value={streetName}
+                  onChange={(e) => setStreetName(e.target.value)}
+                  required
+                >
+                  <option value="">Select a street...</option>
+                  {STREET_NAMES.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </Select>
+              </FormSection>
+
+              <FormSection>
+                <Label>Street Number *</Label>
+                <Select
+                  value={streetNumber}
+                  onChange={(e) => setStreetNumber(e.target.value)}
+                  required
+                >
+                  <option value="">Select number...</option>
+                  {streetNumbers.map(num => (
+                    <option key={num} value={num}>{num}</option>
+                  ))}
+                </Select>
+              </FormSection>
+            </FormRow>
+          )}
 
           <FormSection>
             <Label>Your Name (optional)</Label>
@@ -483,11 +613,13 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
             <TextArea
               value={naturalLanguageInput}
               onChange={(e) => setNaturalLanguageInput(e.target.value)}
-              placeholder="e.g., Paper and Scrolls, right by Regret and 90th"
+              placeholder="e.g., Paper and Scrolls, right by Regret and 90th
+Discount Magic, right by Lonely and 65th
+Thieves Guild at Fear and 23rd"
               required
             />
             <ExampleText>
-              Examples: "Discount Magic, right by Lonely and 65th" or "Thieves Guild at Fear and 23rd"
+              Enter one or more locations, one per line. Examples: "Discount Magic, right by Lonely and 65th" or "Thieves Guild at Fear and 23rd"
             </ExampleText>
           </FormSection>
 
