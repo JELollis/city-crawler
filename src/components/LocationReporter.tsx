@@ -353,6 +353,15 @@ export const LocationReporter: React.FC<LocationReporterProps> = ({ onLocationRe
       setSuccessMessage(`Successfully reported ${effectiveBuildingName} at ${streetName} & ${streetNumber}!`);
       resetForm();
       onLocationReported?.(reportedLocation);
+        try {
+            const tokenRes = await fetch("https://lollis-home.ddns.net/api/request-token.py");
+            const token = await tokenRes.text();
+            await fetch(`https://lollis-home.ddns.net/api/trigger-update.py?token=${token}`);
+            console.log("✅ Bot update triggered.");
+        } catch (e) {
+            console.warn("⚠️ Failed to trigger bot update:", e);
+        }
+
     } catch (error) {
       console.error('❌ API request failed:', error);
       console.error('Error details:', {
