@@ -193,7 +193,7 @@ export const LocationReportsPage: React.FC<LocationReportsPageProps> = ({ onBack
   const handleLocationReported = () => {
     // Refresh the listings when a new location is reported
     setRefreshKey(prev => prev + 1);
-    setActiveTab('listings'); // Switch to listings to show the new report
+    setActiveTab('report'); // Switch to report to show the new report
   };
 
   const handleLocationUpdated = () => {
